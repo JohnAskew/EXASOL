@@ -1,0 +1,255 @@
+CREATE SCHEMA IF NOT EXISTS EXA_TOOLBOX;
+OPEN SCHEMA EXA_TOOLBOX;
+--GRANT EXECUTE ON SCHEMA EXA_TOOLBOX TO PUBLIC;
+--GRANT USAGE ON SCHEMA EXA_TOOLBOX TO PUBLIC;
+--/
+CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
+--===========================================================
+-- READ ME FIRST, You are solely responsible for using this preprocessing script!
+--     We strongly urge you to read the documentation first BEFORE
+--     implementing this script. 
+--
+-- This script has code to prevent banning the "SYS" (dba) user.
+--     That is, if "sys" or "SYS" appears in ban_session_uzer_list,
+--     it will be ignored. Do NOT remove that block of code,
+--     unless you risk being banned perpetually, unless you 
+--     have an alternate database user with DBA role to 
+--     reset the SQL_PREPROCESSOR_SCRIPT parameter.
+--        format: ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = null;
+--
+-- If you decide to modify this script, which is intended to be
+--    a temporary SQL_PREPROCESSOR_SCRIPT, be aware that 
+--    SQL_PREPROCESSOR_SCRIPTs do NOT return messages, they 
+--    pass on the massaged SQL to the SQL Compiler There is
+--    no point in trying to return an error message. 
+--===========================================================
+   
+    require("os")
+    msg_unable_to_read_system_table = "Either mal-formed Query or Current User does not have privileges to read HIDDEN TABLE '''EXA_USER_SESSIONS'''. Aborting with no action taken."
+    msg_banned = "Your connection is denied by SQL script SESSION_BAN. Contact your Exasol DBA to resolve"
+    --
+    -- Banning criteria
+    --
+    local ban_ip_list = {"10.10.10.10", "192.168.1.109"}
+    local ban_os_user_list = {"joas","all"}
+    local ban_session_uzer_list  = {"sys", "jaskew"}
+    local ban_session_effective_user_list = {}
+    --
+    -- Flags showing if banning criteria was met
+    --
+    local found_ip_in_list = false
+    local found_os_user_in_list = false
+    local found_session_uzer_in_list = false
+    local found_session_effective_user_in_list = false
+    --
+    -- Banning matching banning criteria to incoming query
+    --
+    
+    banned_ip_hit = ""          -- Can only have 1 ip match query results to ban_ip_list,
+                                --    Either the current query's host (ip) is used for matching.
+                                
+    banned_os_user_hit = ""     -- Can only have 1 user match query results to ban_user_list,
+                                --    Either the current query's os_user is used for matching.
+                                
+    banned_session_uzer_hit = ""
+    
+    banned_session_effective_user = ""
+    
+--
+--==========================================
+-- FUNCTIONS
+--==========================================
+--------------------------------------------
+    function later_gater()
+--------------------------------------------
+       os.exit()
+    end
+    
+--------------------------------------------
+    function table.empty(self)
+--------------------------------------------
+       for _, _ in pairs(self) do
+          return false
+       end
+       return true
+    end 
+    
+--------------------------------------------
+    function print_debug(session_host, session_os_user, session_uzer, session_effective_user, found_ip_inlist, found_os_user_inlist, found_session_uzer_inlist)
+--------------------------------------------
+         print("session_host="
+         ..tostring(session_host)
+         .." os_user="
+         ..tostring(session_os_user)
+         .." session_uzer="
+         ..tostring(session_uzer)
+         .." session_effective_user="
+         ..session_effective_user
+         .." foundip_inlist="
+         ..tostring(found_ip_inlist)
+         .." found_os_user_inlist="
+         ..tostring(found_os_user_inlist)
+         .. " found_session_uzer_inlist="
+         ..tostring(found_session_uzer_inlist)
+         )        
+    end 
+--------------------------------------------
+-- START LOGIC (processing starts here
+--------------------------------------------
+    local ban_success, ban_results = pquery('SELECT HOST, OS_USER, USER_NAME, EFFECTIVE_USER FROM EXA_USER_SESSIONS  WHERE SESSION_ID = CURRENT_SESSION')
+    
+    if ban_success == nil or not ban_success then
+        print(msg_unable_to_read_system_table)
+        goto exit_script
+    end
+        
+    session_host = ban_results[1][1]
+    session_os_user = string.upper(ban_results[1][2])
+    session_uzer    = string.upper(ban_results[1][3])
+    session_effective_user = string.upper(ban_results[1][4])
+--==================================================
+--
+-- Housekeeping, is there anything to ban?
+--
+--==================================================
+--=================================================          
+-- IF TEST 1 - All 3 lists are empty meaning "ban_ip_list", "ban_os_user_list", and "ban_session_uzer_list" do not have any values define.
+--=================================================
+    
+    if table.empty(ban_ip_list) and table.empty(ban_os_user_list) and table.empty(ban_session_uzer_list) then
+         print("NO processing...no banning criteria provided.")
+         goto exit_script
+    end
+   
+    if not table.empty(ban_ip_list) then
+       for _, v in pairs(ban_ip_list) do
+           print("v="..v.." session_host="..session_host)
+           if v == session_host then
+              print("HIT on IP "..session_host)
+              found_ip_in_list  = true
+              banned_ip_hit     = session_host
+           end
+       end -- END For
+    end -- END beginning IF
+ --    
+   
+    if not table.empty(ban_os_user_list) then
+       for _,v in pairs(ban_os_user_list) do
+          if string.upper(v) == session_os_user then
+             print("HIT on OS USER "..session_os_user)
+             found_os_user_in_list = true
+             banned_os_user_hit    = session_os_user
+          end
+       
+       end -- END For
+    end -- END beginning IF
+    
+   if not table.empty(ban_session_uzer_list) then
+      for _,v in pairs(ban_session_uzer_list) do
+         if string.upper(v) ~= "SYS" then
+             if string.upper(v) == session_uzer then
+                print("HIT on USER "..session_uzer)
+                found_session_uzer_in_list = true
+                banned_uzer_hit    = session_uzer
+             end
+         end
+       
+       end -- END For
+    end -- END beginning IF
+
+--=================================================         
+--=================================================
+-- MAIN LOGIC FOR BANNING CRITERIA
+--=================================================
+--=================================================
+-- Loop Login, decide whether to ban, server, os user, database (session) user or all
+--
+--=================================================          
+-- IF TEST 2 - All 3 lists are populated, meaning "ban_ip_list", "ban_os_user_list", and "ban_session_uzer_list" contains values.
+--=================================================
+--    Criteria for Banning, if the IP (host) matches what is in "ban_ip_list"
+--                          and if the os_user must matches what is in "ban_os_user_list"
+--                          and the session_uzer matches what is in ban_session_uzer_list
+--             Then we will ban the incoming session. 
+--
+    if not table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then         
+       if found_ip_in_list and  found_os_user_in_list and  found_session_uzer_in_list then
+           print_debug(session_host, session_os_user, session_uzer, session_effective_user, tostring(found_ip_in_list), tostring(found_os_user_in_list), tostring(found_session_uzer_in_list))
+           print("BANNING HIT! on Host:"..session_host.. " and User:"..session_os_user.." and Session Uzer:"..session_uzer)
+           later_gater()
+       end
+    end
+
+--=================================================          
+-- IF TEST 3 - 2 lists are populated, meaning "ban_ip_list", "ban_os_user_list"  contains values, and "ban_session_uzer_list" does not (is empty).
+--=================================================
+   if not table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and table.empty(ban_session_uzer_list) then
+     if found_ip_in_list and found_os_user_in_list and session_uzer ~= "SYS" then
+          print("BANNING HIT! on Host:"..session_host.. " and User:"..session_os_user.." EXClUDING Session Uzer:"..session_uzer)
+          later_gater()
+     end
+   end
+--=================================================          
+-- IF TEST 4 - 2 lists are populated, meaning "ban_ip_list", "ban_session_uzer_list"  contains values, and "ban_os_user_list" does not (is empty).
+--=================================================
+   if not table.empty(ban_ip_list) and table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
+      if found_ip_in_list and not found_os_user_in_list and found_session_uzer_in_list and session_uzer ~= "SYS" then
+         print("BANNING HIT! on Host:"..session_host.."Session_uzer:"..session_uzer.."EXCLUSING os_user:"..session_os_user)
+         later_gater()
+      end
+   end
+--=================================================
+-- IF TEST 5 - 2 lists are populated, "ban_os_user_list" and "ban_session_uzer_list" contains values, "ban_ip_list" is empty.
+--=================================================   
+   if table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
+      if found_os_user_in_list and found_session_uzer_in_list and session_uzer ~= "SYS" then
+         print("BANNING HIT! on os_user:"..session_os_user.." session_uzer:"..session_uzer.." EXCLUSING ALL HOSTS and IPs")
+         later_gater()
+      end
+   end
+--=================================================
+-- IF TEST 6 - 1 list is populated, "ban_ip_list" contains content, "ban_os_uzer_list" and "ban_session_uzer_list" are empty.
+--=================================================
+   if not table.empty(ban_ip_list) and table.empty(ban_os_user_list) and table.empty(ban_session_uzer_list) then
+      if found_ip_in_list and session_uzer ~="SYS" then
+         print("BANNING HIT! on Host:"..session_host.."EXCLUDING os_user:"..session_os_user.." AND session_uzer:"..session_uzer)
+         later_gater()
+      end
+   end
+--=================================================
+-- IF TEST 7 - 1 list is  populated, "ban_os_user_list" contains content, "ban_ip_list" and "ban_session_uzer_list" are empty.
+--=================================================
+   if table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and table.empty(ban_session_uzer_list) then
+      if found_os_user_in_list and session_uzer ~= "SYS" then
+          print_debug(session_host, session_os_user, session_uzer, session_effective_user, tostring(found_ip_in_list), tostring(found_os_user_in_list), tostring(found_session_uzer_in_list))
+          print("BANNING HIT! on session_os_user-->"..session_os_user.." EXCLUDING session_host-->"..session_host.." AND session_uzer-->"..session_uzer)
+         later_gater()
+      end
+   end
+--=================================================
+-- IF TEST 8 - 1 list is  populated, "ban_session_uzer_list" contains content, "ban_ip_list" and "ban_os_user_list" are empty.
+--=================================================
+   if table.empty(ban_ip_list) and table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
+      if found_session_uzer_in_list and string.upper(session_uzer) ~= "SYS" then
+         print_debug(session_host, session_os_user, session_uzer, session_effective_user, tostring(found_ip_in_list), tostring(found_os_user_in_list), tostring(found_session_uzer_in_list))
+         print("BANNING HIT! on session_uzer-->"..session_uzer.." EXCLUSING session_host-->"..session_host.." AND session_os_user-->"..session_os_user)
+         later_gater()
+      end
+   end
+--==============================================
+--==============================================
+-- SCRIPT EXIT POINT - No more logic,
+--    exiting PREPROCESSING and start
+--    running query you provided
+--
+::exit_script::
+--==============================================
+--==============================================
+/
+
+execute script EXA_TOOLBOX.SESSION_BAN WITH OUTPUT;
+
+--
+--ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = EXA_TOOLBOX.SESSION_BAN;
+--ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = EXA_TOOLBOX.SESSION_BAN;
+--ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = null;
