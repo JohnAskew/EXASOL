@@ -1,38 +1,19 @@
-CREATE SCHEMA IF NOT EXISTS EXA_TOOLBOX;
-OPEN SCHEMA EXA_TOOLBOX;
---GRANT EXECUTE ON SCHEMA EXA_TOOLBOX TO PUBLIC;
---GRANT USAGE ON SCHEMA EXA_TOOLBOX TO PUBLIC;
+CREATE SCHEMA IF NOT EXISTS PREPROCESSOR;
+OPEN SCHEMA PREPROCESSOR;
+--GRANT USAGE ON SCHEMA PREPROCESSOR TO PUBLIC; --only needs to be run once!
 --/
 CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
---===========================================================
--- READ ME FIRST, You are solely responsible for using this preprocessing script!
---     We strongly urge you to read the documentation first BEFORE
---     implementing this script. 
---
--- This script has code to prevent banning the "SYS" (dba) user.
---     That is, if "sys" or "SYS" appears in ban_session_uzer_list,
---     it will be ignored. Do NOT remove that block of code,
---     unless you risk being banned perpetually, unless you 
---     have an alternate database user with DBA role to 
---     reset the SQL_PREPROCESSOR_SCRIPT parameter.
---        format: ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = null;
---
--- If you decide to modify this script, which is intended to be
---    a temporary SQL_PREPROCESSOR_SCRIPT, be aware that 
---    SQL_PREPROCESSOR_SCRIPTs do NOT return messages, they 
---    pass on the massaged SQL to the SQL Compiler There is
---    no point in trying to return an error message. 
---===========================================================
+
    
     require("os")
-    msg_unable_to_read_system_table = "Either mal-formed Query or Current User does not have privileges to read HIDDEN TABLE '''EXA_USER_SESSIONS'''. Aborting with no action taken."
-    msg_banned = "Your connection is denied by SQL script SESSION_BAN. Contact your Exasol DBA to resolve"
+    msg_unable_to_read_system_table = "Either mal-formed Query or Current User does not have proper privileges granted. Aborting with no action taken."
+    msg_banned = "Your connection is denied by SQL script SESSION_BAN. Contact your Exasol DBA to resolve."
     --
     -- Banning criteria
     --
-    local ban_ip_list = {"10.10.10.10", "192.168.1.109"}
-    local ban_os_user_list = {"joas","all"}
-    local ban_session_uzer_list  = {"sys", "jaskew"}
+    local ban_ip_list = {"192.168.1.109"}
+    local ban_os_user_list = {"joas"}
+    local ban_session_uzer_list  = {"jaskew"}
     local ban_session_effective_user_list = {}
     --
     -- Flags showing if banning criteria was met
@@ -62,8 +43,8 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
 --------------------------------------------
     function later_gater()
 --------------------------------------------
-       os.exit()
-    end
+        os.exit()
+     end
     
 --------------------------------------------
     function table.empty(self)
@@ -93,9 +74,22 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
          ..tostring(found_session_uzer_inlist)
          )        
     end 
+
+--------------------------------------------
+    function whoami()
+--------------------------------------------
+       output("Database Name:"..tostring(exa.meta.database_name))
+       output("Database Version:"..tostring(exa.meta.database_version))
+       output("Number of Nodes:"..tostring(exa.meta.node_count))
+       output("Current User:"..tostring(exa.meta.current_user))
+       output("Current Schema:"..tostring(exa.meta.current_schema))
+       output("Session_ID:"..tostring(exa.meta.session_id))
+    end
 --------------------------------------------
 -- START LOGIC (processing starts here
 --------------------------------------------
+    whoami()
+    
     local ban_success, ban_results = pquery('SELECT HOST, OS_USER, USER_NAME, EFFECTIVE_USER FROM EXA_USER_SESSIONS  WHERE SESSION_ID = CURRENT_SESSION')
     
     if ban_success == nil or not ban_success then
@@ -107,6 +101,7 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
     session_os_user = string.upper(ban_results[1][2])
     session_uzer    = string.upper(ban_results[1][3])
     session_effective_user = string.upper(ban_results[1][4])
+    print("session_host: "..session_host.." session_os_user: "..session_os_user.." session_uzr: "..session_uzer.."session_effective_user: "..session_effective_user)
 --==================================================
 --
 -- Housekeeping, is there anything to ban?
@@ -123,8 +118,7 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
    
     if not table.empty(ban_ip_list) then
        for _, v in pairs(ban_ip_list) do
-           print("v="..v.." session_host="..session_host)
-           if v == session_host then
+            if v == session_host then
               print("HIT on IP "..session_host)
               found_ip_in_list  = true
               banned_ip_hit     = session_host
@@ -176,7 +170,8 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
        if found_ip_in_list and  found_os_user_in_list and  found_session_uzer_in_list then
            print_debug(session_host, session_os_user, session_uzer, session_effective_user, tostring(found_ip_in_list), tostring(found_os_user_in_list), tostring(found_session_uzer_in_list))
            print("BANNING HIT! on Host:"..session_host.. " and User:"..session_os_user.." and Session Uzer:"..session_uzer)
-           later_gater()
+           goto exit_script
+           --later_gater()
        end
     end
 
@@ -232,24 +227,22 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
    if table.empty(ban_ip_list) and table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
       if found_session_uzer_in_list and string.upper(session_uzer) ~= "SYS" then
          print_debug(session_host, session_os_user, session_uzer, session_effective_user, tostring(found_ip_in_list), tostring(found_os_user_in_list), tostring(found_session_uzer_in_list))
-         print("BANNING HIT! on session_uzer-->"..session_uzer.." EXCLUSING session_host-->"..session_host.." AND session_os_user-->"..session_os_user)
+         print("BANNING HIT! on session_uzer-->"..session_uzer.." EXCLUDING session_host-->"..session_host.." AND session_os_user-->"..session_os_user)
          later_gater()
       end
    end
---==============================================
---==============================================
--- SCRIPT EXIT POINT - No more logic,
---    exiting PREPROCESSING and start
---    running query you provided
---
+
+
 ::exit_script::
---==============================================
---==============================================
 /
 
-execute script EXA_TOOLBOX.SESSION_BAN WITH OUTPUT;
+
+GRANT EXECUTE ON SCHEMA PREPROCESSOR TO PUBLIC;
+GRANT EXECUTE ON SCRIPT PREPROCESSOR.SESSION_BAN TO PUBLIC;
+
+execute script PREPROCESSOR.SESSION_BAN WITH OUTPUT;
 
 --
---ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = EXA_TOOLBOX.SESSION_BAN;
---ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = EXA_TOOLBOX.SESSION_BAN;
+--ALTER SESSION SET SQL_PREPROCESSOR_SCRIPT = PREPROCESSOR.SESSION_BAN;
+--ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = PREPROCESSOR.SESSION_BAN;
 --ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = null;
