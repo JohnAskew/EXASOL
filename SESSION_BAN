@@ -1,9 +1,44 @@
 CREATE SCHEMA IF NOT EXISTS PREPROCESSOR;
 OPEN SCHEMA PREPROCESSOR;
 --GRANT USAGE ON SCHEMA PREPROCESSOR TO PUBLIC; --only needs to be run once!
+--GRANT EXECUTE ON SCHEMA PREPROCESSOR TO PUBLIC; --only needs to be run once!
+
 --/
 CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
-
+--[[--===========================================================
+-- READ ME FIRST, You are solely responsible for using this preprocessing script!
+--     We strongly urge you to read the documentation first BEFORE
+--     implementing this script. 
+--
+-- This script has code to prevent banning the "SYS" (dba) user.
+--     That is, if "sys" or "SYS" appears in ban_session_uzer_list,
+--     it will be ignored. Do NOT remove that block of code,
+--     unless you risk being banned perpetually, unless you 
+--     have an alternate database user with DBA role to 
+--     reset the SQL_PREPROCESSOR_SCRIPT parameter.
+--        format: ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = null;
+--
+-- If you decide to modify this script, which is intended to be
+--    a temporary SQL_PREPROCESSOR_SCRIPT, be aware that 
+--    SQL_PREPROCESSOR_SCRIPTs do NOT return messages, they 
+--    pass on the massaged SQL to the SQL Compiler. There is
+--    no point in trying to return an error message. 
+--      This script does contain messages, for testing. You 
+--    can test the functionality of the this script if
+--    you simply execute the script, as you would with a normal
+--    Lua script. It's when you run the ALTER SYSTEM SET
+--    SQL_PREPROCESSOR_SCRIPT = PREPROCESSOR.SESSION_BAN; that 
+--    everyone is impacted.
+--
+--  If you wish to prevent other users from turning off the 
+--  SQL_PREPROCESSOR_SCRIPT, as you have issued the
+--  ALTER SYSTEM SET SQL_PREPROCESSOR_SCRIPT = PREPROCESSOR.SESSION_BAN;,
+--  you can edit the database and add this database parameter:
+--  alterSystemProhibitsAlterSessionForPreprocessing=1;
+--     Setting this database parameter inhibits users from
+--  ALTERing their session not to use the SQL_PREPROCESSOR_SCRIPT.
+--===========================================================
+]]--
    
     require("os")
     msg_unable_to_read_system_table = "Either mal-formed Query or Current User does not have proper privileges granted. Aborting with no action taken."
@@ -16,14 +51,14 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
     local ban_session_uzer_list  = {"jaskew"}
     local ban_session_effective_user_list = {}
     --
-    -- Flags showing if banning criteria was met
+    -- Flags showing if banning criteria were met
     --
     local found_ip_in_list = false
     local found_os_user_in_list = false
     local found_session_uzer_in_list = false
     local found_session_effective_user_in_list = false
     --
-    -- Banning matching banning criteria to incoming query
+    -- Banning matching banning criteria to the incoming query
     --
     
     banned_ip_hit = ""          -- Can only have 1 ip match query results to ban_ip_list,
@@ -180,7 +215,7 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
 --=================================================
    if not table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and table.empty(ban_session_uzer_list) then
      if found_ip_in_list and found_os_user_in_list and session_uzer ~= "SYS" then
-          print("BANNING HIT! on Host:"..session_host.. " and User:"..session_os_user.." EXClUDING Session Uzer:"..session_uzer)
+          print("BANNING HIT! on Host:"..session_host.. " and User:"..session_os_user.." EXCLUDING Session Uzer:"..session_uzer)
           later_gater()
      end
    end
@@ -189,7 +224,7 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
 --=================================================
    if not table.empty(ban_ip_list) and table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
       if found_ip_in_list and not found_os_user_in_list and found_session_uzer_in_list and session_uzer ~= "SYS" then
-         print("BANNING HIT! on Host:"..session_host.."Session_uzer:"..session_uzer.."EXCLUSING os_user:"..session_os_user)
+         print("BANNING HIT! on Host:"..session_host.."Session_uzer:"..session_uzer.."EXCLUDING os_user:"..session_os_user)
          later_gater()
       end
    end
@@ -198,7 +233,7 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
 --=================================================   
    if table.empty(ban_ip_list) and not table.empty(ban_os_user_list) and not table.empty(ban_session_uzer_list) then
       if found_os_user_in_list and found_session_uzer_in_list and session_uzer ~= "SYS" then
-         print("BANNING HIT! on os_user:"..session_os_user.." session_uzer:"..session_uzer.." EXCLUSING ALL HOSTS and IPs")
+         print("BANNING HIT! on os_user:"..session_os_user.." session_uzer:"..session_uzer.." EXCLUDING ALL HOSTS and IPs")
          later_gater()
       end
    end
@@ -237,7 +272,6 @@ CREATE OR REPLACE LUA SCRIPT SESSION_BAN() RETURNS TABLE AS
 /
 
 
-GRANT EXECUTE ON SCHEMA PREPROCESSOR TO PUBLIC;
 GRANT EXECUTE ON SCRIPT PREPROCESSOR.SESSION_BAN TO PUBLIC;
 
 execute script PREPROCESSOR.SESSION_BAN WITH OUTPUT;
